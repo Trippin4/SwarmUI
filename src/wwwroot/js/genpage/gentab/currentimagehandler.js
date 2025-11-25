@@ -566,11 +566,12 @@ function shiftToNextImagePreview(next = true, expand = false, isArrows = false) 
 }
 
 window.addEventListener('keydown', function(kbevent) {
+    let imgSrc = this.document.getElementById('current_image_img')?.dataset.src;
     let isFullView = imageFullView.isOpen();
     let isCurImgFocused = document.activeElement &&
         (findParentOfClass(document.activeElement, 'current_image')
-        || findParentOfClass(document.activeElement, 'current_image_batch')
-        || document.activeElement.tagName == 'BODY');
+            || findParentOfClass(document.activeElement, 'current_image_batch')
+            || document.activeElement.tagName == 'BODY');
     if (isFullView && kbevent.key == 'Escape') {
         $('#image_fullview_modal').modal('toggle');
     }
@@ -585,6 +586,14 @@ window.addEventListener('keydown', function(kbevent) {
     }
     else if (kbevent.key === "Enter" && kbevent.ctrlKey && isVisible(getRequiredElementById('simple_generate_button'))) {
         getRequiredElementById('simple_generate_button').click();
+    }
+    else if (kbevent.key === "Delete" && (isFullView || isCurImgFocused) && imgSrc) {
+        fullSrc = getImageFullSrc(imgSrc);
+        deleteImageFromServer(fullSrc, imgSrc, kbevent);
+    }
+    else if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "s" && (isFullView || isCurImgFocused) && imgSrc) {
+        fullSrc = getImageFullSrc(imgSrc);
+        toggleStar(fullSrc, imgSrc);
     }
     else {
         return;
@@ -637,7 +646,7 @@ function alignImageDataFormat() {
 }
 
 function toggleStar(path, rawSrc) {
-    genericRequest('ToggleImageStarred', {'path': path}, data => {
+    genericRequest('ToggleImageStarred', { 'path': path }, data => {
         let curImgImg = currentImageHelper.getCurrentImage();
         if (curImgImg && curImgImg.dataset.src == rawSrc) {
             let oldMetadata = JSON.parse(curImgImg.dataset.metadata);
@@ -674,6 +683,37 @@ function toggleStar(path, rawSrc) {
         }
     });
 }
+
+function deleteImageFromServer(fullsrc, src, event = null) {
+    if (!uiImprover.lastShift && getUserSetting('ui.checkifsurebeforedelete', true) && !event?.shiftKey && !confirm('Are you sure you want to delete this image?\nHold shift to bypass.')) {
+        return;
+    }
+    let deleteBehavior = getUserSetting('ui.deleteimagebehavior', 'next');
+    let shifted = deleteBehavior == 'nothing' ? false : shiftToNextImagePreview(deleteBehavior == 'next', imageFullView.isOpen());
+    if (!shifted) {
+        imageFullView.close();
+    }
+    genericRequest('DeleteImage', { 'path': fullsrc }, data => {
+        let historySection = getRequiredElementById('imagehistorybrowser-content');
+        let div = historySection.querySelector(`.image-block[data-name="${fullsrc}"]`);
+        if (div) {
+            div.remove();
+        }
+        div = historySection.querySelector(`.image-block[data-name="${src}"]`);
+        if (div) {
+            div.remove();
+        }
+        let currentImage = document.getElementById('current_image_img');
+        if (currentImage && currentImage.dataset.src == src) {
+            setCurrentImage(null);
+        }
+        div = getRequiredElementById('current_image_batch').querySelector(`.image-block[data-src="${src}"]`);
+        if (div) {
+            removeImageBlockFromBatch(div);
+        }
+    });
+}
+
 
 defaultButtonChoices = 'Use As Init,Edit Image,Star,Reuse Parameters';
 
@@ -796,7 +836,7 @@ function setCurrentImage(src, metadata = '', batchId = '', previewGrow = false, 
         alignImageDataFormat();
     }
     if (isVideo || isAudio) {
-        img.addEventListener('loadeddata', function() {
+        img.addEventListener('loadeddata', function () {
             if (img) {
                 img.onload();
             }
@@ -814,8 +854,7 @@ function setCurrentImage(src, metadata = '', batchId = '', previewGrow = false, 
     let buttons = createDiv(null, 'current-image-buttons');
     let imagePathClean = getImageFullSrc(src);
     let buttonsChoice = getUserSetting('ButtonsUnderMainImages', '');
-    if (buttonsChoice == '')
-    {
+    if (buttonsChoice == '') {
         buttonsChoice = defaultButtonChoices;
     }
     buttonsChoice = buttonsChoice.toLowerCase().replaceAll(' ', '').split(',');
