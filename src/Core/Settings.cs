@@ -408,6 +408,17 @@ public class Settings : AutoConfiguration
         [ConfigComment("Settings related to the user interface, entirely contained to the frontend.")]
         public UserUIData UI = new();
 
+        /// <summary> Settings related to keyboard shortcuts.</summary>
+        public class KeybindsData : AutoConfiguration
+        {
+            [ConfigComment("Keybind to trigger generation.\nDefault is 'Ctrl+Enter'.")]
+            public string GenerateKeybind = "Ctrl+Enter";
+
+        }
+
+        [ConfigComment("Settings related to keyboard shortcuts. Click the textbox then press the keybind you want to set.")]
+        public KeybindsData Keybinds = new();
+
         public class ParamParsingData : AutoConfiguration
         {
             [ConfigComment("Whether LoRAs can be added to a generation multiple times.\nIf false, the firstmost usage of a LoRA will be kept and others will be discarded.")]

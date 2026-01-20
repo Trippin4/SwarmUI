@@ -565,12 +565,12 @@ function shiftToNextImagePreview(next = true, expand = false, isArrows = false) 
     return true;
 }
 
-window.addEventListener('keydown', function(kbevent) {
+window.addEventListener('keydown', function (kbevent) {
     let isFullView = imageFullView.isOpen();
     let isCurImgFocused = document.activeElement &&
         (findParentOfClass(document.activeElement, 'current_image')
-        || findParentOfClass(document.activeElement, 'current_image_batch')
-        || document.activeElement.tagName == 'BODY');
+            || findParentOfClass(document.activeElement, 'current_image_batch')
+            || document.activeElement.tagName == 'BODY');
     if (isFullView && kbevent.key == 'Escape') {
         $('#image_fullview_modal').modal('toggle');
     }
@@ -580,10 +580,10 @@ window.addEventListener('keydown', function(kbevent) {
     else if ((kbevent.key == 'ArrowRight' || kbevent.key == 'ArrowDown') && (isFullView || isCurImgFocused)) {
         shiftToNextImagePreview(true, isFullView, true);
     }
-    else if (kbevent.key === "Enter" && kbevent.ctrlKey && isVisible(getRequiredElementById('main_image_area'))) {
+    else if (keybindManager.matches(kbevent, getUserSetting('keybinds.generatekeybind')) && isVisible(getRequiredElementById('main_image_area'))) {
         getRequiredElementById('alt_generate_button').click();
     }
-    else if (kbevent.key === "Enter" && kbevent.ctrlKey && isVisible(getRequiredElementById('simple_generate_button'))) {
+    else if (keybindManager.matches(kbevent, getUserSetting('keybinds.generatekeybind')) && isVisible(getRequiredElementById('simple_generate_button'))) {
         getRequiredElementById('simple_generate_button').click();
     }
     else {
@@ -637,7 +637,7 @@ function alignImageDataFormat() {
 }
 
 function toggleStar(path, rawSrc) {
-    genericRequest('ToggleImageStarred', {'path': path}, data => {
+    genericRequest('ToggleImageStarred', { 'path': path }, data => {
         let curImgImg = currentImageHelper.getCurrentImage();
         if (curImgImg && curImgImg.dataset.src == rawSrc) {
             let oldMetadata = JSON.parse(curImgImg.dataset.metadata);
@@ -796,7 +796,7 @@ function setCurrentImage(src, metadata = '', batchId = '', previewGrow = false, 
         alignImageDataFormat();
     }
     if (isVideo || isAudio) {
-        img.addEventListener('loadeddata', function() {
+        img.addEventListener('loadeddata', function () {
             if (img) {
                 img.onload();
             }
@@ -814,8 +814,7 @@ function setCurrentImage(src, metadata = '', batchId = '', previewGrow = false, 
     let buttons = createDiv(null, 'current-image-buttons');
     let imagePathClean = getImageFullSrc(src);
     let buttonsChoice = getUserSetting('ButtonsUnderMainImages', '');
-    if (buttonsChoice == '')
-    {
+    if (buttonsChoice == '') {
         buttonsChoice = defaultButtonChoices;
     }
     buttonsChoice = buttonsChoice.toLowerCase().replaceAll(' ', '').split(',');
