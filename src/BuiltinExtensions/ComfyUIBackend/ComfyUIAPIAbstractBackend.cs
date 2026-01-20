@@ -15,6 +15,7 @@ using System.Web;
 using Newtonsoft.Json;
 using System.Buffers.Binary;
 using SwarmUI.Media;
+using SwarmUI.WebAPI;
 
 namespace SwarmUI.Builtin_ComfyUIBackend;
 
@@ -208,7 +209,7 @@ public abstract class ComfyUIAPIAbstractBackend : AbstractT2IBackend
         Status = BackendStatus.DISABLED;
     }
 
-    public virtual void PostResultCallback(string filename)
+    public virtual void PostResultCallback(string filename, T2IParamInput input)
     {
     }
 
@@ -257,6 +258,15 @@ public abstract class ComfyUIAPIAbstractBackend : AbstractT2IBackend
                 Logs.Verbose("Need to connect a websocket...");
                 id = Guid.NewGuid().ToString();
                 socket = await NetworkBackendUtils.ConnectWebsocket(APIAddress, $"ws?clientId={id}");
+                await socket.SendJson(new JObject()
+                {
+                    ["type"] = "feature_flags",
+                    ["data"] = new JObject()
+                    {
+                        ["supports_preview_metadata"] = true
+                        // supports_manager_v4_ui
+                    }
+                }, API.WebsocketTimeout);
                 Logs.Verbose("Connected.");
             }
         }
@@ -358,7 +368,9 @@ public abstract class ComfyUIAPIAbstractBackend : AbstractT2IBackend
                 byte[] output = await getData;
                 if (output is not null)
                 {
-                    if (Encoding.ASCII.GetString(output, 0, 8) == "{\"type\":")
+                    user_input.ReceiveRawBackendData?.Invoke("comfy_websocket", output);
+                    string firstChunk = Encoding.ASCII.GetString(output, 0, 8);
+                    if (firstChunk == "{\"type\":" || firstChunk == "{ \"type\"")
                     {
                         JObject json = Utilities.ParseToJson(Encoding.UTF8.GetString(output));
                         if (Logs.MinimumLevel <= Logs.LogLevel.Verbose)
@@ -509,7 +521,7 @@ public abstract class ComfyUIAPIAbstractBackend : AbstractT2IBackend
             JObject historyOut = await SendGet<JObject>($"history/{promptId}");
             if (!historyOut.Properties().IsEmpty())
             {
-                foreach (MediaFile file in await GetAllImagesForHistory(historyOut[promptId], interrupt))
+                foreach (MediaFile file in await GetAllImagesForHistory(historyOut[promptId], user_input, interrupt))
                 {
                     if (Program.ServerSettings.AddDebugData)
                     {
@@ -525,7 +537,10 @@ public abstract class ComfyUIAPIAbstractBackend : AbstractT2IBackend
                     takeOutput(new T2IEngine.ImageOutput() { File = file, IsReal = true, GenTimeMS = firstStep == 0 ? -1 : (Environment.TickCount64 - firstStep) });
                 }
             }
-            await HttpClient.PostAsync($"{APIAddress}/history", new StringContent(new JObject() { ["delete"] = new JArray() { promptId } }.ToString()), Program.GlobalProgramCancel);
+            if (!user_input.Get(T2IParamTypes.NoInternalSpecialHandling, false))
+            {
+                await HttpClient.PostAsync($"{APIAddress}/history", new StringContent(new JObject() { ["delete"] = new JArray() { promptId } }.ToString()), Program.GlobalProgramCancel);
+            }
         }
         catch (Exception)
         {
@@ -558,7 +573,7 @@ public abstract class ComfyUIAPIAbstractBackend : AbstractT2IBackend
             string metadata = StringConversionHelper.UTF8Encoding.GetString(output, 8, metaLength);
             JObject jmeta = Utilities.ParseToJson(metadata);
             MediaType type = MediaType.ImageJpg;
-            if (jmeta.TryGetValue("mime_type", out JToken mimeType))
+            if (jmeta.TryGetValue("mime_type", out JToken mimeType) || jmeta.TryGetValue("image_type", out mimeType))
             {
                 type = MediaType.TypesByMimeType.GetValueOrDefault($"{mimeType}", MediaType.ImageJpg);
             }
@@ -605,7 +620,7 @@ public abstract class ComfyUIAPIAbstractBackend : AbstractT2IBackend
         }
     }
 
-    private async Task<MediaFile[]> GetAllImagesForHistory(JToken output, CancellationToken interrupt)
+    private async Task<MediaFile[]> GetAllImagesForHistory(JToken output, T2IParamInput userInput, CancellationToken interrupt)
     {
         if (Logs.MinimumLevel <= Logs.LogLevel.Verbose)
         {
@@ -672,7 +687,7 @@ public abstract class ComfyUIAPIAbstractBackend : AbstractT2IBackend
                     return;
                 }
                 outputs.Add(new Image(image, type));
-                PostResultCallback(fname);
+                PostResultCallback(fname, userInput);
             }
             if (outData["images"] is not null)
             {
@@ -1016,6 +1031,11 @@ public abstract class ComfyUIAPIAbstractBackend : AbstractT2IBackend
         input.Set(T2IParamTypes.Seed, 1);
         if (upstreamInput is not null)
         {
+            if (upstreamInput.Get(T2IParamTypes.NoLoadModels, false))
+            {
+                CurrentModelName = model.Name;
+                return true;
+            }
             void copyParam<T>(T2IRegisteredParam<T> param)
             {
                 if (upstreamInput.TryGet(param, out T val))

@@ -46,11 +46,23 @@ public partial class WorkflowGenerator
     /// <summary>Returns true if the current model is Lightricks LTX Video.</summary>
     public bool IsLTXV() => IsModelCompatClass(T2IModelClassSorter.CompatLtxv);
 
+    /// <summary>Returns true if the current model is Lightricks LTX Video 2.</summary>
+    public bool IsLTXV2() => IsModelCompatClass(T2IModelClassSorter.CompatLtxv2);
+
     /// <summary>Returns true if the current model is Black Forest Labs' Flux.1.</summary>
     public bool IsFlux() => IsModelCompatClass(T2IModelClassSorter.CompatFlux);
 
-    /// <summary>Returns true if the current model is Black Forest Labs' Flux.2.</summary>
-    public bool IsFlux2() => IsModelCompatClass(T2IModelClassSorter.CompatFlux2);
+    /// <summary>Returns true if the current model is Black Forest Labs' Flux.2 Dev.</summary>
+    public bool IsFlux2Dev() => IsModelCompatClass(T2IModelClassSorter.CompatFlux2);
+
+    /// <summary>Returns true if the current model is Black Forest Labs' Flux.2 Klein (4B).</summary>
+    public bool IsFlux2Klein4B() => IsModelCompatClass(T2IModelClassSorter.CompatFlux2Klein4B);
+
+    /// <summary>Returns true if the current model is Black Forest Labs' Flux.2 Klein (9B).</summary>
+    public bool IsFlux2Klein9B() => IsModelCompatClass(T2IModelClassSorter.CompatFlux2Klein9B);
+
+    /// <summary>Returns true if the current model is any Black Forest Labs' Flux.2 variant.</summary>
+    public bool IsAnyFlux2() => IsFlux2Dev() || IsFlux2Klein4B() || IsFlux2Klein9B();
 
     /// <summary>Returns true if the current model is AuraFlow.</summary>
     public bool IsAuraFlow() => IsModelCompatClass(T2IModelClassSorter.CompatAuraFlow);
@@ -74,7 +86,7 @@ public partial class WorkflowGenerator
     /// <summary>Returns true if the current model supports Flux Guidance.</summary>
     public bool HasFluxGuidance()
     {
-        return (IsFlux() && CurrentModelClass()?.ID != "Flux.1-schnell") || IsFlux2() || IsHunyuanVideo();
+        return (IsFlux() && CurrentModelClass()?.ID != "Flux.1-schnell") || IsAnyFlux2() || IsHunyuanVideo();
     }
 
     /// <summary>Returns true if the current model is NVIDIA Sana.</summary>
@@ -85,6 +97,9 @@ public partial class WorkflowGenerator
 
     /// <summary>Returns true if the current model is a Z-Image model.</summary>
     public bool IsZImage() => IsModelCompatClass(T2IModelClassSorter.CompatZImage);
+
+    /// <summary>Returns true if the current model is an Ovis model.</summary>
+    public bool IsOvis() => IsModelCompatClass(T2IModelClassSorter.CompatOvis);
 
     /// <summary>Returns true if the current model is OmniGen.</summary>
     public bool IsOmniGen()
@@ -157,6 +172,18 @@ public partial class WorkflowGenerator
         return clazz is not null && clazz.StartsWith("nvidia-cosmos-predict2");
     }
 
+    /// <summary>Returns true if the current model is Kandinsky 5 Image Lite.</summary>
+    public bool IsKandinsky5ImgLite() => IsModelCompatClass(T2IModelClassSorter.CompatKandinsky5ImgLite);
+
+    /// <summary>Returns true if the current model is Kandinsky 5 Video Lite.</summary>
+    public bool IsKandinsky5VidLite() => IsModelCompatClass(T2IModelClassSorter.CompatKandinsky5VidLite);
+
+    /// <summary>Returns true if the current model is Kandinsky 5 Video Pro.</summary>
+    public bool IsKandinsky5VidPro() => IsModelCompatClass(T2IModelClassSorter.CompatKandinsky5VidPro);
+
+    /// <summary>Returns true if the current model is any Kandinsky 5 variant.</summary>
+    public bool IsKandinsky5() => IsKandinsky5ImgLite() || IsKandinsky5VidLite() || IsKandinsky5VidPro();
+
     /// <summary>Returns true if the current model is any Wan-2.1 variant.</summary>
     public bool IsWanVideo()
     {
@@ -187,7 +214,7 @@ public partial class WorkflowGenerator
     /// <summary>Returns true if the current main text input model model is a Video model (as opposed to image).</summary>
     public bool IsVideoModel()
     {
-        return IsLTXV() || IsMochi() || IsHunyuanVideo() || IsHunyuanVideo15() || IsNvidiaCosmos1() || IsAnyWanModel();
+        return IsLTXV() || IsLTXV2() || IsMochi() || IsHunyuanVideo() || IsHunyuanVideo15() || IsNvidiaCosmos1() || IsAnyWanModel() || IsKandinsky5VidLite() || IsKandinsky5VidPro();
     }
 
     /// <summary>Creates an Empty Latent Image node.</summary>
@@ -207,7 +234,7 @@ public partial class WorkflowGenerator
                 ["width"] = width
             }, id);
         }
-        else if (IsFlux2())
+        else if (IsAnyFlux2())
         {
             return CreateNode("EmptyFlux2LatentImage", new JObject()
             {
@@ -216,7 +243,7 @@ public partial class WorkflowGenerator
                 ["width"] = width
             }, id);
         }
-        else if (IsSD3() || IsFlux() || IsHiDream() || IsChroma() || IsOmniGen() || IsQwenImage() || IsZImage())
+        else if (IsSD3() || IsFlux() || IsHiDream() || IsChroma() || IsOmniGen() || IsQwenImage() || IsZImage() || IsOvis() || IsKandinsky5ImgLite())
         {
             return CreateNode("EmptySD3LatentImage", new JObject()
             {
@@ -263,6 +290,28 @@ public partial class WorkflowGenerator
                 ["width"] = width
             }, id);
         }
+        else if (IsLTXV2())
+        {
+            string emptyVideo = CreateNode("EmptyLTXVLatentVideo", new JObject()
+            {
+                ["batch_size"] = batchSize,
+                ["length"] = UserInput.Get(T2IParamTypes.Text2VideoFrames, 97),
+                ["height"] = height,
+                ["width"] = width
+            });
+            string emptyAudio = CreateNode("LTXVEmptyLatentAudio", new JObject()
+            {
+                ["batch_size"] = batchSize,
+                ["frames_number"] = UserInput.Get(T2IParamTypes.Text2VideoFrames, 97),
+                ["frame_rate"] = UserInput.Get(T2IParamTypes.VideoFPS, 24),
+                ["audio_vae"] = FinalAudioVae
+            });
+            return CreateNode("LTXVConcatAVLatent", new JObject()
+            {
+                ["video_latent"] = NodePath(emptyVideo, 0),
+                ["audio_latent"] = NodePath(emptyAudio, 0)
+            }, id);
+        }
         else if (IsWanVideo22())
         {
             return CreateNode("Wan22ImageToVideoLatent", new JObject()
@@ -284,7 +333,7 @@ public partial class WorkflowGenerator
                 ["width"] = width
             }, id);
         }
-        else if (IsHunyuanVideo() || IsWanVideo())
+        else if (IsHunyuanVideo() || IsWanVideo() || IsKandinsky5VidLite() || IsKandinsky5VidPro())
         {
             int frames = 73;
             if (IsWanVideo())
@@ -294,7 +343,7 @@ public partial class WorkflowGenerator
             return CreateNode("EmptyHunyuanLatentVideo", new JObject()
             {
                 ["batch_size"] = batchSize,
-                ["length"] = UserInput.Get(T2IParamTypes.Text2VideoFrames, frames),
+                ["length"] = IsKandinsky5ImgLite() ? 1 : UserInput.Get(T2IParamTypes.Text2VideoFrames, frames),
                 ["height"] = height,
                 ["width"] = width
             }, id);
@@ -382,7 +431,7 @@ public partial class WorkflowGenerator
             }
             if (string.IsNullOrWhiteSpace(vaeFile))
             {
-                vaeModel = Program.T2IModelSets["VAE"].Models.Values.FirstOrDefault(m => m.ModelClass?.CompatClass?.ID == compatClass);
+                vaeModel = compatClass is null ? null : Program.T2IModelSets["VAE"].Models.Values.FirstOrDefault(m => m.ModelClass?.CompatClass?.ID == compatClass);
                 if (vaeModel is not null)
                 {
                     Logs.Debug($"Auto-selected first available VAE of compat class '{compatClass}', VAE '{vaeModel.Name}' will be applied");
@@ -400,6 +449,15 @@ public partial class WorkflowGenerator
                 Program.RefreshAllModelSets();
             }
             g.LoadingVAE = g.CreateVAELoader(vaeFile, nodeId);
+        }
+
+        public void AudioVaeLoad(string ckpt)
+        {
+            string avaeLoader = g.CreateNode("LTXVAudioVAELoader", new JObject()
+            {
+                ["ckpt_name"] = ckpt
+            });
+            g.FinalAudioVae = [avaeLoader, 0];
         }
 
         string RequireClipModel(string name, string url, string hash, T2IRegisteredParam<T2IModel> param)
@@ -459,7 +517,17 @@ public partial class WorkflowGenerator
 
         public string GetQwen3_4bModel()
         {
-            return RequireClipModel("qwen_3_4b.safetensors", "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors", "6c671498573ac2f7a5501502ccce8d2b08ea6ca2f661c458e708f36b36edfc5a", T2IParamTypes.QwenModel);
+            return RequireClipModel("qwen_3_4b.safetensors", "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors", "72450b19758172c5a7273cf7de729d1c17e7f434a104a00167624cba94f68f15", T2IParamTypes.QwenModel);
+        }
+
+        public string GetQwen3_8bModel()
+        {
+            return RequireClipModel("qwen_3_8b.safetensors", "https://huggingface.co/Comfy-Org/flux2-klein-9B/resolve/main/split_files/text_encoders/qwen_3_8b_fp4mixed.safetensors", "bbf16f981d98e16d080c566134814c4e9f6aadd0d0e1383c60bc44ba939d760d", T2IParamTypes.QwenModel);
+        }
+
+        public string GetOvisQwenModel()
+        {
+            return RequireClipModel("ovis_2.5.safetensors", "https://huggingface.co/Comfy-Org/Ovis-Image/resolve/main/split_files/text_encoders/ovis_2.5.safetensors", "f453ee5e7a25cb23cf2adf7aae3e5b405f22097cb67f2cfcca029688cb3f740d", T2IParamTypes.QwenModel);
         }
 
         public string GetMistralFlux2Model()
@@ -515,8 +583,18 @@ public partial class WorkflowGenerator
 
         public string GetGemma2Model()
         {
-            // TODO: Selector param?
-            return RequireClipModel("gemma_2_2b_fp16.safetensors", "https://huggingface.co/Comfy-Org/Lumina_Image_2.0_Repackaged/resolve/main/split_files/text_encoders/gemma_2_2b_fp16.safetensors", "29761442862f8d064d3f854bb6fabf4379dcff511a7f6ba9405a00bd0f7e2dbd", null);
+            return RequireClipModel("gemma_2_2b_fp16.safetensors", "https://huggingface.co/Comfy-Org/Lumina_Image_2.0_Repackaged/resolve/main/split_files/text_encoders/gemma_2_2b_fp16.safetensors", "29761442862f8d064d3f854bb6fabf4379dcff511a7f6ba9405a00bd0f7e2dbd", T2IParamTypes.GemmaModel);
+        }
+
+        public string GetGemma3_12bModel()
+        {
+            return RequireClipModel("gemma_3_12B_it.safetensors", "https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors", "aaca463d11e6d8d2a4bdb0d6299214c15ef78a3f73e0ef8113d5a9d0219b3f6d", T2IParamTypes.GemmaModel);
+        }
+
+        public string GetLTX2EmbedClip()
+        {
+            // TODO: This is cursed and wrong.
+            return RequireClipModel("ltx2/ltx2-embeddings-connector-distill.safetensors", "https://huggingface.co/Kijai/LTXV2_comfy/resolve/main/text_encoders/ltx-2-19b-embeddings_connector_distill_bf16.safetensors", "8990ec3fe88396ca33ac1795c89b1771d88190e51e24084b21f54b25399acbed", null);
         }
 
         public void LoadClip(string type, string model)
@@ -533,6 +611,17 @@ public partial class WorkflowGenerator
                 ["device"] = "default"
             });
             g.LoadingClip = [singleClipLoader, 0];
+        }
+
+        public void LoadClipAudio(string model, string ckpt)
+        {
+            string loaderType = "LTXAVTextEncoderLoader";
+            string clipLoader = g.CreateNode(loaderType, new JObject()
+            {
+                ["text_encoder"] = model,
+                ["ckpt_name"] = ckpt
+            });
+            g.LoadingClip = [clipLoader, 0];
         }
 
         public void LoadClip2(string type, string modelA, string modelB)
@@ -571,7 +660,7 @@ public partial class WorkflowGenerator
     }
 
     /// <summary>Creates a model loader and adapts it with any registered model adapters, and returns (Model, Clip, VAE).</summary>
-    public (T2IModel, JArray, JArray, JArray) CreateStandardModelLoader(T2IModel model, string type, string id = null, bool noCascadeFix = false)
+    public (T2IModel, JArray, JArray, JArray) CreateStandardModelLoader(T2IModel model, string type, string id = null, bool noCascadeFix = false, int sectionId = 0)
     {
         ModelLoadHelpers helpers = new(this);
         string helper = $"modelloader_{model.Name}_{type}";
@@ -606,7 +695,7 @@ public partial class WorkflowGenerator
             {
                 ["unet_name"] = model.ToString(ModelFolderFormat),
                 ["model_type"] = trtType
-            }, id);
+            }, id, false);
             LoadingModel = [trtloader, 0];
             // TODO: This is a hack
             T2IModel[] sameArch = [.. Program.MainSDModels.Models.Values.Where(m => m.ModelClass?.ID == baseArch)];
@@ -633,7 +722,7 @@ public partial class WorkflowGenerator
             {
                 ["ckpt_name"] = model.ToString(ModelFolderFormat),
                 ["model"] = model.ModelClass.ID == "pixart-ms-sigma-xl-2-2k" ? "PixArtMS_Sigma_XL_2_2K" : "PixArtMS_Sigma_XL_2"
-            }, id);
+            }, id, false);
             LoadingModel = [pixartNode, 0];
             string singleClipLoader = CreateNode("CLIPLoader", new JObject()
             {
@@ -654,7 +743,7 @@ public partial class WorkflowGenerator
                 string modelNode = CreateNode("UnetLoaderGGUF", new JObject()
                 {
                     ["unet_name"] = model.ToString(ModelFolderFormat)
-                }, id);
+                }, id, false);
                 LoadingModel = [modelNode, 0];
             }
             else if (model.Metadata?.SpecialFormat == "nunchaku" || model.Metadata?.SpecialFormat == "nunchaku-fp4")
@@ -669,13 +758,13 @@ public partial class WorkflowGenerator
                     string modelNode = CreateNode("NunchakuFluxDiTLoader", new JObject()
                     {
                         ["model_path"] = model.Name.EndsWith("/transformer_blocks.safetensors") ? model.Name.BeforeLast('/').Replace("/", ModelFolderFormat ?? $"{Path.DirectorySeparatorChar}") : model.ToString(ModelFolderFormat),
-                        ["cache_threshold"] = UserInput.Get(ComfyUIBackendExtension.NunchakuCacheThreshold, 0),
+                        ["cache_threshold"] = UserInput.Get(ComfyUIBackendExtension.NunchakuCacheThreshold, 0, sectionId: sectionId),
                         ["attention"] = "nunchaku-fp16",
                         ["cpu_offload"] = "auto",
                         ["device_id"] = 0,
                         ["data_type"] = model.Metadata?.SpecialFormat == "nunchaku-fp4" ? "bfloat16" : "float16",
                         ["i2f_mode"] = "enabled"
-                    }, id);
+                    }, id, false);
                     LoadingModel = [modelNode, 0];
                 }
                 else if (IsQwenImage())
@@ -686,7 +775,15 @@ public partial class WorkflowGenerator
                         ["cpu_offload"] = "auto",
                         ["num_blocks_on_gpu"] = 1, // TODO: If nunchaku doesn't fix automation here, add a param. Also enable cpu_offload if the param is given.
                         ["use_pin_memory"] = "enable"
-                    }, id);
+                    }, id, false);
+                    LoadingModel = [modelNode, 0];
+                }
+                else if (IsZImage())
+                {
+                    string modelNode = CreateNode("NunchakuZImageDiTLoader", new JObject()
+                    {
+                        ["model_name"] = model.ToString(ModelFolderFormat),
+                    }, id, false);
                     LoadingModel = [modelNode, 0];
                 }
                 else
@@ -704,7 +801,7 @@ public partial class WorkflowGenerator
                 {
                     ["unet_name"] = model.ToString(ModelFolderFormat),
                     ["bnb_dtype"] = model.Metadata?.SpecialFormat == "bnb_fp4" ? "fp4" : "nf4"
-                }, id);
+                }, id, false);
                 LoadingModel = [modelNode, 0];
             }
             else
@@ -713,7 +810,7 @@ public partial class WorkflowGenerator
                 {
                     Logs.Error($"Model '{model.Name}' likely has corrupt/invalid metadata, and needs to be reset.");
                 }
-                string dtype = UserInput.Get(ComfyUIBackendExtension.PreferredDType, "automatic");
+                string dtype = UserInput.Get(ComfyUIBackendExtension.PreferredDType, "automatic", sectionId: sectionId);
                 if (dtype == "automatic")
                 {
                     if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) // TODO: Or AMD?
@@ -745,7 +842,7 @@ public partial class WorkflowGenerator
                 {
                     ["unet_name"] = model.ToString(ModelFolderFormat),
                     ["weight_dtype"] = dtype
-                }, id);
+                }, id, false);
                 LoadingModel = [modelNode, 0];
             }
             LoadingClip = null;
@@ -761,7 +858,7 @@ public partial class WorkflowGenerator
             {
                 ["ckpt_name"] = model.ToString(ModelFolderFormat),
                 ["bnb_dtype"] = model.Metadata?.SpecialFormat == "bnb_fp4" ? "fp4" : "nf4"
-            }, id);
+            }, id, false);
             LoadingModel = [modelNode, 0];
             LoadingClip = [modelNode, 1];
             LoadingVAE = [modelNode, 2];
@@ -772,7 +869,7 @@ public partial class WorkflowGenerator
             {
                 ["ckpt_name"] = model.ToString(ModelFolderFormat),
                 ["model"] = "SanaMS_1600M_P1_D20"
-            }, id);
+            }, id, false);
             LoadingModel = [sanaNode, 0];
             string clipLoader = CreateNode("GemmaLoader", new JObject()
             {
@@ -796,27 +893,27 @@ public partial class WorkflowGenerator
             string modelNode = CreateNode("CheckpointLoaderSimple", new JObject()
             {
                 ["ckpt_name"] = model.ToString(ModelFolderFormat)
-            }, id);
+            }, id, false);
             LoadingModel = [modelNode, 0];
             LoadingClip = [modelNode, 1];
             LoadingVAE = [modelNode, 2];
-            if ((IsFlux() || IsFlux2()) && (model.Metadata?.TextEncoders ?? "") == "")
+            if ((IsFlux() || IsFlux2Dev()) && (model.Metadata?.TextEncoders ?? "") == "")
             {
                 LoadingClip = null;
                 LoadingVAE = null;
             }
         }
-        string predType = UserInput.Get(T2IParamTypes.OverridePredictionType, model.Metadata?.PredictionType);
+        string predType = UserInput.Get(T2IParamTypes.OverridePredictionType, model.Metadata?.PredictionType, sectionId: sectionId);
         if (IsSD3())
         {
             string sd3Node = CreateNode("ModelSamplingSD3", new JObject()
             {
                 ["model"] = LoadingModel,
-                ["shift"] = UserInput.Get(T2IParamTypes.SigmaShift, 3)
+                ["shift"] = UserInput.Get(T2IParamTypes.SigmaShift, 3, sectionId: sectionId)
             });
             LoadingModel = [sd3Node, 0];
             string tencs = model.Metadata?.TextEncoders ?? "";
-            if (!UserInput.TryGet(T2IParamTypes.SD3TextEncs, out string mode))
+            if (!UserInput.TryGet(T2IParamTypes.SD3TextEncs, out string mode, sectionId: sectionId))
             {
                 if (tencs == "")
                 {
@@ -854,10 +951,20 @@ public partial class WorkflowGenerator
                 helpers.DoVaeLoader( UserInput.SourceSession?.User?.Settings?.VAEs?.DefaultSD3VAE, "stable-diffusion-v3", "sd35-vae");
             }
         }
-        else if (IsFlux2())
+        else if (IsFlux2Dev())
         {
             helpers.LoadClip("flux2", helpers.GetMistralFlux2Model());
-            helpers.DoVaeLoader(null, "flux-2", "flux2-vae");
+            helpers.DoVaeLoader(UserInput.SourceSession?.User?.Settings?.VAEs?.DefaultFlux2VAE, "flux-2", "flux2-vae");
+        }
+        else if (IsFlux2Klein4B())
+        {
+            helpers.LoadClip("flux2", helpers.GetQwen3_4bModel());
+            helpers.DoVaeLoader(UserInput.SourceSession?.User?.Settings?.VAEs?.DefaultFlux2VAE, "flux-2", "flux2-vae");
+        }
+        else if (IsFlux2Klein9B())
+        {
+            helpers.LoadClip("flux2", helpers.GetQwen3_8bModel());
+            helpers.DoVaeLoader(UserInput.SourceSession?.User?.Settings?.VAEs?.DefaultFlux2VAE, "flux-2", "flux2-vae");
         }
         else if (IsFlux() && (LoadingClip is null || LoadingVAE is null || UserInput.Get(T2IParamTypes.T5XXLModel) is not null || UserInput.Get(T2IParamTypes.ClipLModel) is not null))
         {
@@ -886,12 +993,16 @@ public partial class WorkflowGenerator
                 ["min_length"] = 0
             });
             LoadingClip = [t5Patch, 0];
-            string samplingNode = CreateNode("ModelSamplingAuraFlow", new JObject()
+            double shift = UserInput.Get(T2IParamTypes.SigmaShift, 1, sectionId: sectionId);
+            if (shift > 0)
             {
-                ["model"] = LoadingModel,
-                ["shift"] = UserInput.Get(T2IParamTypes.SigmaShift, 1)
-            });
-            LoadingModel = [samplingNode, 0];
+                string samplingNode = CreateNode("ModelSamplingAuraFlow", new JObject()
+                {
+                    ["model"] = LoadingModel,
+                    ["shift"] = shift
+                });
+                LoadingModel = [samplingNode, 0];
+            }
             if (IsChromaRadiance())
             {
                 LoadingVAE = CreateVAELoader("pixel_space");
@@ -930,7 +1041,7 @@ public partial class WorkflowGenerator
             string samplingNode = CreateNode("ModelSamplingAuraFlow", new JObject()
             {
                 ["model"] = LoadingModel,
-                ["shift"] = UserInput.Get(T2IParamTypes.SigmaShift, 3)
+                ["shift"] = UserInput.Get(T2IParamTypes.SigmaShift, 3, sectionId: sectionId)
             });
             LoadingModel = [samplingNode, 0];
         }
@@ -953,6 +1064,23 @@ public partial class WorkflowGenerator
         {
             helpers.LoadClip("ltxv", helpers.GetT5XXLModel());
             helpers.DoVaeLoader(null, "lightricks-ltx-video", "ltxv-vae");
+        }
+        else if (IsLTXV2())
+        {
+            if (LoadingVAE is null)
+            {
+                // Hypothetical approximation of what would probably be right if comfy wasn't just entirely broken on handling this
+                helpers.LoadClip2("ltxv", helpers.GetGemma3_12bModel(), helpers.GetLTX2EmbedClip());
+                helpers.DoVaeLoader(null, null, "ltx2-audio-vae");
+                FinalAudioVae = LoadingVAE;
+                helpers.DoVaeLoader(null, "lightricks-ltx-video-2", "ltx2-video-vae");
+                throw new SwarmUserErrorException("LTX2 requires the safetensors checkpoint format currently due to comfy limitations.");
+            }
+            else
+            {
+                helpers.LoadClipAudio(helpers.GetGemma3_12bModel(), model.ToString(ModelFolderFormat));
+                helpers.AudioVaeLoad(model.ToString(ModelFolderFormat));
+            }
         }
         else if (IsHunyuanVideo())
         {
@@ -989,7 +1117,7 @@ public partial class WorkflowGenerator
             string auraNode = CreateNode("ModelSamplingAuraFlow", new JObject()
             {
                 ["model"] = LoadingModel,
-                ["shift"] = UserInput.Get(T2IParamTypes.SigmaShift, 1.73)
+                ["shift"] = UserInput.Get(T2IParamTypes.SigmaShift, 1.73, sectionId: sectionId)
             });
             LoadingModel = [auraNode, 0];
         }
@@ -998,12 +1126,17 @@ public partial class WorkflowGenerator
             helpers.LoadClip("lumina2", helpers.GetQwen3_4bModel());
             helpers.DoVaeLoader(UserInput.SourceSession?.User?.Settings?.VAEs?.DefaultFluxVAE, "flux-1", "flux-ae");
         }
+        else if (IsOvis())
+        {
+            helpers.LoadClip("ovis", helpers.GetOvisQwenModel());
+            helpers.DoVaeLoader(UserInput.SourceSession?.User?.Settings?.VAEs?.DefaultFluxVAE, "flux-1", "flux-ae");
+        }
         else if (IsLumina())
         {
             string samplingNode = CreateNode("ModelSamplingAuraFlow", new JObject()
             {
                 ["model"] = LoadingModel,
-                ["shift"] = UserInput.Get(T2IParamTypes.SigmaShift, 6)
+                ["shift"] = UserInput.Get(T2IParamTypes.SigmaShift, 6, sectionId: sectionId)
             });
             LoadingModel = [samplingNode, 0];
             if (LoadingClip is null)
@@ -1015,6 +1148,16 @@ public partial class WorkflowGenerator
                 helpers.DoVaeLoader(UserInput.SourceSession?.User?.Settings?.VAEs?.DefaultFluxVAE, "flux-1", "flux-ae");
             }
         }
+        else if (IsKandinsky5ImgLite())
+        {
+            helpers.LoadClip2("kandinsky5_image", helpers.GetClipLModel(), helpers.GetQwenImage25_7b_tenc());
+            helpers.DoVaeLoader(UserInput.SourceSession?.User?.Settings?.VAEs?.DefaultFluxVAE, "flux-1", "flux-ae");
+        }
+        else if (IsKandinsky5VidLite() || IsKandinsky5VidPro())
+        {
+            helpers.LoadClip2("kandinsky5", helpers.GetClipLModel(), helpers.GetQwenImage25_7b_tenc());
+            helpers.DoVaeLoader(null, "hunyuan-video", "hunyuan-video-vae");
+        }
         else if (!string.IsNullOrWhiteSpace(predType) && LoadingModel is not null)
         {
             if (predType == "sd3")
@@ -1022,7 +1165,7 @@ public partial class WorkflowGenerator
                 string samplingNode = CreateNode("ModelSamplingSD3", new JObject()
                 {
                     ["model"] = LoadingModel,
-                    ["shift"] = UserInput.Get(T2IParamTypes.SigmaShift, 3)
+                    ["shift"] = UserInput.Get(T2IParamTypes.SigmaShift, 3, sectionId: sectionId)
                 });
                 LoadingModel = [samplingNode, 0];
             }
@@ -1037,9 +1180,9 @@ public partial class WorkflowGenerator
                 LoadingModel = [discreteNode, 0];
             }
         }
-        if (UserInput.TryGet(T2IParamTypes.SigmaShift, out double shiftVal))
+        if (UserInput.TryGet(T2IParamTypes.SigmaShift, out double shiftVal, sectionId: sectionId))
         {
-            if (IsFlux() || IsFlux2())
+            if (IsFlux() || IsAnyFlux2())
             {
                 string samplingNode = CreateNode("ModelSamplingFlux", new JObject()
                 {

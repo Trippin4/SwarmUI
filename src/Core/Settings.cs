@@ -151,7 +151,10 @@ public class Settings : AutoConfiguration
         public int MaxBackendInitAttempts = 3;
 
         [ConfigComment("Safety check, the maximum duration all requests can be waiting for a backend before the system declares a backend handling failure.\nIf you get backend timeout errors while intentionally running very long generations, increase this value.")]
-        public int MaxTimeoutMinutes = 120;
+        public double MaxTimeoutMinutes = 120;
+
+        [ConfigComment("If checked, when MaxTimeoutMinutes is hit, forcibly restart all backends.\nIf unchecked, pending jobs will be cancelled with an error message.")]
+        public bool ForceRestartOnTimeout = false;
 
         [ConfigComment("The maximum duration an individual request can be waiting on a backend to be available before giving up.\n"
             + "Not to be confused with 'MaxTimeoutMinutes' which requires backends be unresponsive for that duration, this duration includes requests that are merely waiting because other requests are queued."
@@ -270,7 +273,7 @@ public class Settings : AutoConfiguration
         public string SDEmbeddingFolder = "Embeddings";
 
         [ConfigComment("The ControlNets model folder to use within 'ModelRoot'.\nDefaults to 'controlnet'.\nAbsolute paths work too (usually do not use an absolute path, use just a folder name).\nUse a semicolon ';' to split multiple paths.")]
-        public string SDControlNetsFolder = "controlnet";
+        public string SDControlNetsFolder = "controlnet;model_patches";
 
         [ConfigComment("The CLIP (Text Encoder) model folder to use within 'ModelRoot'.\nDefaults to 'text_encoders;clip'.\nAbsolute paths work too (usually do not use an absolute path, use just a folder name).\nUse a semicolon ';' to split multiple paths.")]
         public string SDClipFolder = "text_encoders;clip";
@@ -403,6 +406,9 @@ public class Settings : AutoConfiguration
             [ConfigComment("If enabled, shifting to next/previous image (eg with arrow keys) in history or batch view,\ncycles at the ends (jumps from the start to the end or vice versa).\nIf disabled, shifting will simply stop at the ends.\nIf 'only arrow keys', cycling happens when you press the arrow keys, but not other actions (eg deleting an image will not cycle).")]
             [ManualSettingsOptions(Vals = ["true", "false", "only_arrows"], ManualNames = ["Enabled", "Disabled", "Only Arrow Keys"])]
             public string ImageShiftingCycles = "true";
+
+            [ConfigComment("If enabled, metadata will be hidden in the image Full View by default.\nIf disabled, metadata will be shown by default.\nYou zoom still zoom in or out to show or hide the metadata at any time as usual.")]
+            public bool DefaultHideMetadataInFullview = false;
         }
 
         [ConfigComment("Settings related to the user interface, entirely contained to the frontend.")]
@@ -500,6 +506,10 @@ public class Settings : AutoConfiguration
             [ManualSettingsOptions(Impl = null, Vals = ["None"])]
             public string DefaultFluxVAE = "None";
 
+            [ConfigComment("What VAE to use with Flux2 models by default.")]
+            [ManualSettingsOptions(Impl = null, Vals = ["None"])]
+            public string DefaultFlux2VAE = "None";
+
             [ConfigComment("What VAE to use with SD3 models by default.")]
             [ManualSettingsOptions(Impl = null, Vals = ["None"])]
             public string DefaultSD3VAE = "None";
@@ -564,8 +574,12 @@ public class Settings : AutoConfiguration
             [SettingsOptions(Impl = typeof(AudioImpl))]
             public string CompletionSound = "";
 
-            [ConfigComment($"If any sound effects are enabled, this is the volume they will play at.\n0 means silent, 1 means max volume, 0.5 means half volume.")]
+            [ConfigComment($"For system sound effects such as CompletionSound, this is the volume they will play at.\n0 means silent, 1 means max volume, 0.5 means half volume.")]
             public double Volume = 0.5;
+
+            [ConfigComment("When a video is played, what should be done with the audio?")]
+            [ManualSettingsOptions(Impl = null, Vals = ["last", "play", "silent"], ManualNames = ["Remember Last", "Autoplay", "Default to Silent"])]
+            public string VideoAudioBehavior = "last";
         }
 
         [ConfigComment("Settings related to audio.")]

@@ -67,6 +67,12 @@ public partial class WorkflowGenerator
     /// <summary>Lock for when ensuring the backend has valid models.</summary>
     public static MultiLockSet<string> ModelDownloaderLocks = new(32);
 
+    /// <summary>Helper to create a NodePath: [nodeId, outputIndex].</summary>
+    public static JArray NodePath(string node, int index)
+    {
+        return [node, index];
+    }
+
     /// <summary>The raw user input data.</summary>
     public T2IParamInput UserInput;
 
@@ -79,11 +85,14 @@ public partial class WorkflowGenerator
         FinalInputImage = null,
         FinalMask = null,
         FinalVae = ["4", 2],
+        FinalAudioVae = null,
         FinalLatentImage = ["5", 0],
+        FinalLatentAudio = null,
         FinalPrompt = ["6", 0],
         FinalNegativePrompt = ["7", 0],
         FinalSamples = ["10", 0],
         FinalImageOut = null,
+        FinalAudioOut = null,
         FinalTrimLatent = null,
         LoadingModel = null, LoadingClip = null, LoadingVAE = null;
 
@@ -336,7 +345,7 @@ public partial class WorkflowGenerator
             float tencWeight = tencWeights is null || i >= tencWeights.Count ? weight : float.Parse(tencWeights[i]);
             string id = GetStableDynamicID(2000, i);
             string specialFormat = FinalLoadedModel?.Metadata?.SpecialFormat;
-            if (specialFormat == "nunchaku" || specialFormat == "nunchaku-fp4")
+            if (IsFlux() && (specialFormat == "nunchaku" || specialFormat == "nunchaku-fp4"))
             {
                 // This is dirty to use this alt node, but it seems required for Nunchaku.
                 string newId = CreateNode("NunchakuFluxLoraLoader", new JObject()
@@ -401,7 +410,7 @@ public partial class WorkflowGenerator
                 {
                     result = CreateNode("ImageScale", new JObject()
                     {
-                        ["image"] = new JArray() { result, 0 },
+                        ["image"] = NodePath(result, 0),
                         ["width"] = UserInput.GetImageWidth(),
                         ["height"] = UserInput.GetImageHeight(),
                         ["upscale_method"] = "lanczos",
@@ -460,22 +469,22 @@ public partial class WorkflowGenerator
         string croppedImage = CreateNode("SwarmImageCrop", new JObject()
         {
             ["image"] = image,
-            ["x"] = new JArray() { boundsNode, 0 },
-            ["y"] = new JArray() { boundsNode, 1 },
-            ["width"] = new JArray() { boundsNode, 2 },
-            ["height"] = new JArray() { boundsNode, 3 }
+            ["x"] = NodePath(boundsNode, 0),
+            ["y"] = NodePath(boundsNode, 1),
+            ["width"] = NodePath(boundsNode, 2),
+            ["height"] = NodePath(boundsNode, 3)
         });
         string croppedMask = CreateNode("CropMask", new JObject()
         {
             ["mask"] = mask,
-            ["x"] = new JArray() { boundsNode, 0 },
-            ["y"] = new JArray() { boundsNode, 1 },
-            ["width"] = new JArray() { boundsNode, 2 },
-            ["height"] = new JArray() { boundsNode, 3 }
+            ["x"] = NodePath(boundsNode, 0),
+            ["y"] = NodePath(boundsNode, 1),
+            ["width"] = NodePath(boundsNode, 2),
+            ["height"] = NodePath(boundsNode, 3)
         });
         string scaledImage = CreateNode("SwarmImageScaleForMP", new JObject()
         {
-            ["image"] = new JArray() { croppedImage, 0 },
+            ["image"] = NodePath(croppedImage, 0),
             ["width"] = isCustomRes ? targetX : model?.StandardWidth <= 0 ? UserInput.GetImageWidth() : model.StandardWidth,
             ["height"] = isCustomRes ? targetY : model?.StandardHeight <= 0 ? UserInput.GetImageHeight() : model.StandardHeight,
             ["can_shrink"] = true
@@ -520,8 +529,8 @@ public partial class WorkflowGenerator
         string scaledBack = CreateNode("ImageScale", new JObject()
         {
             ["image"] = newImage,
-            ["width"] = new JArray() { boundsNode, 2 },
-            ["height"] = new JArray() { boundsNode, 3 },
+            ["width"] = NodePath(boundsNode, 2),
+            ["height"] = NodePath(boundsNode, 3),
             ["upscale_method"] = "lanczos",
             ["crop"] = "disabled"
         });
@@ -542,10 +551,10 @@ public partial class WorkflowGenerator
         string composited = CreateNode(nodeClass, new JObject()
         {
             ["destination"] = firstImage,
-            ["source"] = new JArray() { scaledBack, 0 },
+            ["source"] = NodePath(scaledBack, 0),
             ["mask"] = croppedMask,
-            ["x"] = new JArray() { boundsNode, 0 },
-            ["y"] = new JArray() { boundsNode, 1 },
+            ["x"] = NodePath(boundsNode, 0),
+            ["y"] = NodePath(boundsNode, 1),
             ["resize_source"] = false,
             ["correction_method"] = UserInput.Get(T2IParamTypes.ColorCorrectionBehavior, "None")
         });
@@ -616,7 +625,8 @@ public partial class WorkflowGenerator
                 ["lossless"] = false,
                 ["quality"] = 95,
                 ["method"] = "default",
-                ["format"] = UserInput.Get(T2IParamTypes.Text2VideoFormat, "webp")
+                ["format"] = UserInput.Get(T2IParamTypes.Text2VideoFormat, "h264-mp4"),
+                ["audio"] = FinalAudioOut
             }, id);
         }
         else if (Features.Contains("comfy_saveimage_ws") && !RestrictCustomNodes)
@@ -635,6 +645,21 @@ public partial class WorkflowGenerator
                 ["images"] = image
             }, id);
         }
+    }
+
+    /// <summary>Creates a node to save an animation output.</summary>
+    public string CreateAnimationSaveNode(JArray anim, int fps, string format, string id = null)
+    {
+        return CreateNode("SwarmSaveAnimationWS", new JObject()
+        {
+            ["images"] = anim,
+            ["fps"] = fps,
+            ["lossless"] = false,
+            ["quality"] = 95,
+            ["method"] = "default",
+            ["format"] = format,
+            ["audio"] = FinalAudioOut
+        }, id);
     }
 
     /// <summary>Creates a VAELoader node and returns its node ID. Avoids duplication.</summary>
@@ -667,8 +692,23 @@ public partial class WorkflowGenerator
     }
 
     /// <summary>Creates a VAEDecode node and returns its node ID.</summary>
-    public string CreateVAEDecode(JArray vae, JArray latent, string id = null)
+    public string CreateVAEDecode(JArray vae, JArray latent, string id = null, bool canAudioDecode = true)
     {
+        if (IsLTXV2() && FinalAudioVae is not null && canAudioDecode)
+        {
+            string separated = CreateNode("LTXVSeparateAVLatent", new JObject()
+            {
+                ["av_latent"] = latent
+            });
+            FinalLatentAudio = [separated, 1];
+            string audioDecoded = CreateNode("LTXVAudioVAEDecode", new JObject()
+            {
+                ["audio_vae"] = FinalAudioVae,
+                ["samples"] = FinalLatentAudio
+            });
+            FinalAudioOut = [audioDecoded, 0];
+            return CreateVAEDecode(vae, [separated, 0], id, false);
+        }
         if (UserInput.TryGet(T2IParamTypes.VAETileSize, out _) || UserInput.TryGet(T2IParamTypes.VAETemporalTileSize, out _))
         {
             return CreateNode("VAEDecodeTiled", new JObject()
@@ -682,7 +722,7 @@ public partial class WorkflowGenerator
             }, id);
         }
         // The VAE requirements for hunyuan are basically unobtainable, so force tiling as stupidproofing
-        else if ((IsHunyuanVideo() || IsHunyuanVideo15()) && UserInput.Get(T2IParamTypes.ModelSpecificEnhancements, true))
+        else if ((IsHunyuanVideo() || IsHunyuanVideo15() || IsKandinsky5VidLite() || IsKandinsky5VidPro()) && UserInput.Get(T2IParamTypes.ModelSpecificEnhancements, true))
         {
             return CreateNode("VAEDecodeTiled", new JObject()
             {
@@ -717,7 +757,7 @@ public partial class WorkflowGenerator
         {
             previews ??= UserInput.Get(ComfyUIBackendExtension.VideoPreviewType, "animate");
         }
-        if (IsLTXV())
+        if (IsLTXV() || IsLTXV2())
         {
             if (!hadSpecialCond)
             {
@@ -790,7 +830,7 @@ public partial class WorkflowGenerator
         {
             defscheduler ??= "beta";
         }
-        else if (IsFlux2())
+        else if (IsAnyFlux2())
         {
             defscheduler ??= "flux2";
         }
@@ -798,7 +838,7 @@ public partial class WorkflowGenerator
         JArray cascadeModel = null;
         if (!rawSampler && IsCascade() && FinalLoadedModel.Name.Contains("stage_c") && Program.MainSDModels.Models.TryGetValue(FinalLoadedModel.Name.Replace("stage_c", "stage_b"), out T2IModel bModel))
         {
-            (_, cascadeModel, _, FinalVae) = CreateStandardModelLoader(bModel, LoadingModelType, null, true);
+            (_, cascadeModel, _, FinalVae) = CreateStandardModelLoader(bModel, LoadingModelType, null, true, sectionId: sectionId);
             willCascadeFix = true;
             defsampler ??= "euler_ancestral";
             defscheduler ??= "simple";
@@ -879,12 +919,12 @@ public partial class WorkflowGenerator
             neg = [ip2p2condNode, 1];
             latent = [ip2p2condNode, 2];
         }
-        else if (IsKontext() || IsOmniGen() || IsQwenImage() || IsFlux2())
+        else if (IsKontext() || IsOmniGen() || IsQwenImage() || IsAnyFlux2())
         {
             JArray img = null;
             JArray imgNeg = null;
             bool doLatentChain = !IsKontext(); // Arguably even kontext should just do this?
-            bool onlyExplicit = (IsQwenImage() && !IsQwenImageEdit()) || IsFlux2();
+            bool onlyExplicit = (IsQwenImage() && !IsQwenImageEdit()) || IsAnyFlux2();
             if (IsOmniGen() || IsQwenImageEditPlus())
             {
                 imgNeg = neg;
@@ -895,7 +935,7 @@ public partial class WorkflowGenerator
                 string refLatentNode = CreateNode("ReferenceLatent", new JObject()
                 {
                     ["conditioning"] = pos,
-                    ["latent"] = new JArray() { vaeEncode, 0 }
+                    ["latent"] = NodePath(vaeEncode, 0)
                 });
                 pos = [refLatentNode, 0];
                 if (imgNeg is not null)
@@ -903,7 +943,7 @@ public partial class WorkflowGenerator
                     string refLatentNodeNeg = CreateNode("ReferenceLatent", new JObject()
                     {
                         ["conditioning"] = imgNeg,
-                        ["latent"] = new JArray() { vaeEncode, 0 }
+                        ["latent"] = NodePath(vaeEncode, 0)
                     });
                     imgNeg = [refLatentNodeNeg, 0];
                 }
@@ -991,7 +1031,7 @@ public partial class WorkflowGenerator
                     string batched = CreateNode("ImageBatch", new JObject()
                     {
                         ["image1"] = img,
-                        ["image2"] = new JArray() { img2, 0 }
+                        ["image2"] = NodePath(img2, 0)
                     });
                     img = [batched, 0];
                 }
@@ -1019,8 +1059,8 @@ public partial class WorkflowGenerator
                 });
                 string negCombine = CreateNode("ConditioningCombine", new JObject()
                 {
-                    ["conditioning_1"] = new JArray() { phantomNode, 1 },
-                    ["conditioning_2"] = new JArray() { phantomNode, 2 }
+                    ["conditioning_1"] = NodePath(phantomNode, 1),
+                    ["conditioning_2"] = NodePath(phantomNode, 2)
                 });
                 pos = [phantomNode, 0];
                 neg = [negCombine, 0];
@@ -1093,11 +1133,11 @@ public partial class WorkflowGenerator
             // TODO: VarSeed, batching, etc. seed logic
             string finalSampler = CreateNode("SamplerCustomAdvanced", new JObject()
             {
-                ["sampler"] = new JArray() { samplerNode, 0 },
+                ["sampler"] = NodePath(samplerNode, 0),
                 ["guider"] = guider,
                 ["sigmas"] = schedulerNode,
                 ["latent_image"] = latentImage,
-                ["noise"] = new JArray() { noiseNode, 0 }
+                ["noise"] = NodePath(noiseNode, 0)
             }, id);
             return finalSampler;
         }
@@ -1119,8 +1159,8 @@ public partial class WorkflowGenerator
             string cfgGuiderNode = CreateNode("DualCFGGuider", new JObject()
             {
                 ["model"] = model,
-                ["cond1"] = new JArray() { ip2p2condNode, 0 },
-                ["cond2"] = new JArray() { ip2p2condNode, 1 },
+                ["cond1"] = NodePath(ip2p2condNode, 0),
+                ["cond2"] = NodePath(ip2p2condNode, 1),
                 ["negative"] = neg,
                 ["cfg_conds"] = cfg,
                 ["cfg_cond2_negative"] = UserInput.Get(T2IParamTypes.IP2PCFG2, 1.5)
@@ -1169,10 +1209,10 @@ public partial class WorkflowGenerator
         {
             string stageBCond = CreateNode("StableCascade_StageB_Conditioning", new JObject()
             {
-                ["stage_c"] = new JArray() { created, 0 },
+                ["stage_c"] = NodePath(created, 0),
                 ["conditioning"] = pos
             });
-            created = CreateKSampler(cascadeModel, [stageBCond, 0], neg, [latent[0], 1], 1.1, steps, startStep, endStep, seed + 27, returnWithLeftoverNoise, addNoise, sigmin, sigmax, previews ?? previews, defsampler, defscheduler, id, true);
+            created = CreateKSampler(cascadeModel, [stageBCond, 0], neg, [latent[0], 1], 1.1, steps, startStep, endStep, seed + 27, returnWithLeftoverNoise, addNoise, sigmin, sigmax, previews ?? previews, defsampler, defscheduler, id, true, sectionId: sectionId);
         }
         return created;
     }
@@ -1222,7 +1262,7 @@ public partial class WorkflowGenerator
             }
             if (fixSize && !doesFit)
             {
-                (width, height) = Utilities.ResToModelFit(width, height, target * target);
+                (width, height) = Utilities.ResToModelFit(width, height, target * target, precision: promptSize ? 1 : 64);
                 string scaleFix = CreateNode("ImageScale", new JObject()
                 {
                     ["image"] = img,
@@ -1244,7 +1284,7 @@ public partial class WorkflowGenerator
         string encoded = CreateVAEEncode(vae, image, id, mask: mask);
         string appliedNode = CreateNode("SetLatentNoiseMask", new JObject()
         {
-            ["samples"] = new JArray() { encoded, 0 },
+            ["samples"] = NodePath(encoded, 0),
             ["mask"] = mask
         });
         return [appliedNode, 0];
@@ -1359,7 +1399,7 @@ public partial class WorkflowGenerator
             });
             string gimm = CreateNode("GIMMVFI_interpolate", new JObject()
             {
-                ["gimmvfi_model"] = new JArray() { modelLoader, 0 },
+                ["gimmvfi_model"] = NodePath(modelLoader, 0),
                 ["images"] = imageIn,
                 ["ds_factor"] = 0.5, // TODO: They recommend this as a factor relative to size. 0.5 for 2k, 0.25 for 4k. This is a major performance alteration.
                 ["interpolation_factor"] = mult,
@@ -1394,11 +1434,13 @@ public partial class WorkflowGenerator
         public double DefaultCFG = 7;
         public bool HadSpecialCond = false;
         public int ContextID = T2IParamInput.SectionID_Video;
+        public Image VideoEndFrame = null;
+        public JArray DoFirstFrameLatentSwap = null;
 
         public void PrepModelAndCond(WorkflowGenerator g)
         {
             g.FinalLoadedModel = VideoModel;
-            (VideoModel, Model, JArray clip, Vae) = g.CreateStandardModelLoader(VideoModel, "image2video", null, true);
+            (VideoModel, Model, JArray clip, Vae) = g.CreateStandardModelLoader(VideoModel, "image2video", null, true, sectionId: ContextID);
             string promptText = Prompt;
             if (VideoModel.ModelClass?.ID == "hunyuan-video-i2v" || VideoModel.ModelClass?.ID == "hunyuan-video-i2v-v2")
             {
@@ -1410,11 +1452,11 @@ public partial class WorkflowGenerator
 
         public void PrepFullCond(WorkflowGenerator g)
         {
-            if (VideoModel.ModelClass?.CompatClass?.ID == "lightricks-ltx-video")
+            if (VideoModel.ModelClass?.CompatClass?.ID == T2IModelClassSorter.CompatLtxv.ID)
             {
                 VideoFPS ??= 24;
                 Frames ??= 97;
-                if (g.UserInput.TryGet(T2IParamTypes.VideoEndFrame, out Image videoEndFrame))
+                if (VideoEndFrame is not null)
                 {
                     throw new SwarmReadableErrorException("LTX-V end-frame is TODO");
                 }
@@ -1450,11 +1492,68 @@ public partial class WorkflowGenerator
                 DefaultSampler = "euler";
                 DefaultScheduler = "ltxv-image";
             }
+            else if (VideoModel.ModelClass?.CompatClass?.ID == T2IModelClassSorter.CompatLtxv2.ID)
+            {
+                VideoFPS ??= 24;
+                Frames ??= 97;
+                if (VideoEndFrame is not null)
+                {
+                    throw new SwarmReadableErrorException("LTX-V2 end-frame is TODO");
+                }
+                else
+                {
+                    string emptyLatent = g.CreateNode("EmptyLTXVLatentVideo", new JObject()
+                    {
+                        ["width"] = Width,
+                        ["height"] = Height,
+                        ["length"] = Frames,
+                        ["batch_size"] = 1
+                    });
+                    string emptyAudio = g.CreateNode("LTXVEmptyLatentAudio", new JObject()
+                    {
+                        ["audio_vae"] = g.FinalAudioVae,
+                        ["frames_number"] = Frames,
+                        ["frame_rate"] = VideoFPS,
+                        ["batch_size"] = 1
+                    });
+                    string preproc = g.CreateNode("LTXVPreprocess", new JObject()
+                    {
+                        ["image"] = g.FinalImageOut,
+                        ["img_compression"] = 32
+                    });
+                    string latentOutNode = g.CreateNode("LTXVImgToVideoInplace", new JObject()
+                    {
+                        ["vae"] = Vae,
+                        ["image"] = NodePath(preproc, 0),
+                        ["latent"] = NodePath(emptyLatent, 0),
+                        ["strength"] = 1.0,
+                        ["bypass"] = false
+                    });
+                    string concatNode = g.CreateNode("LTXVConcatAVLatent", new JObject()
+                    {
+                        ["video_latent"] = NodePath(latentOutNode, 0),
+                        ["audio_latent"] = NodePath(emptyAudio, 0)
+                    });
+                    Latent = [concatNode, 0];
+                }
+                DefaultCFG = 3;
+                string ltxvcond = g.CreateNode("LTXVConditioning", new JObject()
+                {
+                    ["positive"] = PosCond,
+                    ["negative"] = NegCond,
+                    ["frame_rate"] = VideoFPS
+                });
+                PosCond = [ltxvcond, 0];
+                NegCond = [ltxvcond, 1];
+                HadSpecialCond = true;
+                DefaultSampler = "euler";
+                DefaultScheduler = "ltxv-image";
+            }
             else if (VideoModel.ModelClass?.CompatClass?.ID == "nvidia-cosmos-1")
             {
                 VideoFPS ??= 24;
                 Frames ??= 121;
-                if (g.UserInput.TryGet(T2IParamTypes.VideoEndFrame, out Image videoEndFrame))
+                if (VideoEndFrame is not null)
                 {
                     throw new SwarmReadableErrorException("Cosmos end-frame is TODO");
                 }
@@ -1503,6 +1602,29 @@ public partial class WorkflowGenerator
                 Latent = [i2vnode, 1];
                 DefaultSampler = "euler";
                 DefaultScheduler = "simple";
+            }
+            else if (VideoModel.ModelClass?.ID == "kandinsky5-video-pro" || VideoModel.ModelClass?.ID == "kandinsky5-video-lite")
+            {
+                VideoFPS ??= 24;
+                Frames ??= 49;
+                string i2vnode = g.CreateNode("Kandinsky5ImageToVideo", new JObject()
+                {
+                    ["positive"] = PosCond,
+                    ["negative"] = NegCond,
+                    ["vae"] = Vae,
+                    ["width"] = Width,
+                    ["height"] = Height,
+                    ["length"] = Frames,
+                    ["batch_size"] = 1,
+                    ["start_image"] = g.FinalImageOut
+                });
+                PosCond = [i2vnode, 0];
+                NegCond = [i2vnode, 1];
+                DefaultCFG = 1;
+                Latent = [i2vnode, 2];
+                DefaultSampler = "euler";
+                DefaultScheduler = "simple";
+                DoFirstFrameLatentSwap = [i2vnode, 3];
             }
             else if (VideoModel.ModelClass?.ID == "hunyuan-video-1_5")
             {
@@ -1581,9 +1703,9 @@ public partial class WorkflowGenerator
                     });
                     imageIn = [fromBatch, 0];
                 }
-                if (g.UserInput.TryGet(T2IParamTypes.VideoEndFrame, out Image videoEndFrame))
+                if (VideoEndFrame is not null)
                 {
-                    string endFrame = g.CreateLoadImageNode(videoEndFrame, "${videoendframe}", false);
+                    string endFrame = g.CreateLoadImageNode(VideoEndFrame, "${videoendframe}", false);
                     JArray endFrameNode = [endFrame, 0];
                     string scaled = g.CreateNode("ImageScale", new JObject()
                     {
@@ -1672,9 +1794,9 @@ public partial class WorkflowGenerator
                     ["image"] = encodeIn,
                     ["crop"] = "center"
                 });
-                if (g.UserInput.TryGet(T2IParamTypes.VideoEndFrame, out Image videoEndFrame))
+                if (VideoEndFrame is not null)
                 {
-                    string endFrame = g.CreateLoadImageNode(videoEndFrame, "${videoendframe}", false);
+                    string endFrame = g.CreateLoadImageNode(VideoEndFrame, "${videoendframe}", false);
                     JArray endFrameNode = [endFrame, 0];
                     string scaled = g.CreateNode("ImageScale", new JObject()
                     {
@@ -1700,9 +1822,9 @@ public partial class WorkflowGenerator
                         ["negative"] = NegCond,
                         ["vae"] = Vae,
                         ["start_image"] = imageIn,
-                        ["clip_vision_start_image"] = new JArray() { encoded, 0 },
+                        ["clip_vision_start_image"] = NodePath(encoded, 0),
                         ["end_image"] = endFrameNode,
-                        ["clip_vision_end_image"] = new JArray() { encodedEnd, 0 },
+                        ["clip_vision_end_image"] = NodePath(encodedEnd, 0),
                         ["batch_size"] = 1
                     });
                     PosCond = [img2vidNode, 0];
@@ -1720,7 +1842,7 @@ public partial class WorkflowGenerator
                         ["negative"] = NegCond,
                         ["vae"] = Vae,
                         ["start_image"] = imageIn,
-                        ["clip_vision_output"] = new JArray() { encoded, 0 },
+                        ["clip_vision_output"] = NodePath(encoded, 0),
                         ["batch_size"] = 1
                     });
                     PosCond = [img2vidNode, 0];
@@ -1874,12 +1996,12 @@ public partial class WorkflowGenerator
         }
         string explicitSampler = UserInput.Get(ComfyUIBackendExtension.SamplerParam, null, sectionId: genInfo.ContextID, includeBase: false);
         string explicitScheduler = UserInput.Get(ComfyUIBackendExtension.SchedulerParam, null, sectionId: genInfo.ContextID, includeBase: false);
-        string samplered = CreateKSampler(genInfo.Model, genInfo.PosCond, genInfo.NegCond, genInfo.Latent, genInfo.VideoCFG.Value, genInfo.Steps, genInfo.StartStep, endStep, genInfo.Seed, returnLeftoverNoise, true, sigmin: 0.002, sigmax: 1000, previews: previewType, defsampler: genInfo.DefaultSampler, defscheduler: genInfo.DefaultScheduler, hadSpecialCond: genInfo.HadSpecialCond, explicitSampler: explicitSampler, explicitScheduler: explicitScheduler);
+        string samplered = CreateKSampler(genInfo.Model, genInfo.PosCond, genInfo.NegCond, genInfo.Latent, genInfo.VideoCFG.Value, genInfo.Steps, genInfo.StartStep, endStep, genInfo.Seed, returnLeftoverNoise, true, sigmin: 0.002, sigmax: 1000, previews: previewType, defsampler: genInfo.DefaultSampler, defscheduler: genInfo.DefaultScheduler, hadSpecialCond: genInfo.HadSpecialCond, explicitSampler: explicitSampler, explicitScheduler: explicitScheduler, sectionId: genInfo.ContextID);
         FinalLatentImage = [samplered, 0];
         if (genInfo.VideoSwapModel is not null)
         {
             IsImageToVideoSwap = true;
-            (T2IModel swapModel, JArray swapVideoModel, JArray clip, _) = CreateStandardModelLoader(genInfo.VideoSwapModel, "image2video", null, true);
+            (T2IModel swapModel, JArray swapVideoModel, JArray clip, _) = CreateStandardModelLoader(genInfo.VideoSwapModel, "image2video", null, true, sectionId: genInfo.ContextID);
             double cfg = genInfo.VideoCFG.Value;
             int steps = genInfo.Steps;
             genInfo.PosCond = CreateConditioning(genInfo.Prompt, clip, swapModel, true, isVideo: true, isVideoSwap: true);
@@ -1891,9 +2013,27 @@ public partial class WorkflowGenerator
             steps = UserInput.GetNullable(T2IParamTypes.Steps, T2IParamInput.SectionID_VideoSwap, false) ?? steps;
             endStep = (int)Math.Round(steps * (1 - genInfo.VideoSwapPercent));
             // TODO: Should class-changes be allowed (must re-emit all the model-specific cond logic, maybe a vae reencoder - this is basically a refiner run)
-            samplered = CreateKSampler(swapVideoModel, genInfo.PosCond, genInfo.NegCond, FinalLatentImage, cfg, steps, endStep, 10000, genInfo.Seed + 1, false, false, sigmin: 0.002, sigmax: 1000, previews: previewType, defsampler: genInfo.DefaultSampler, defscheduler: genInfo.DefaultScheduler, hadSpecialCond: genInfo.HadSpecialCond, explicitSampler: explicitSampler, explicitScheduler: explicitScheduler);
+            samplered = CreateKSampler(swapVideoModel, genInfo.PosCond, genInfo.NegCond, FinalLatentImage, cfg, steps, endStep, 10000, genInfo.Seed + 1, false, false, sigmin: 0.002, sigmax: 1000, previews: previewType, defsampler: genInfo.DefaultSampler, defscheduler: genInfo.DefaultScheduler, hadSpecialCond: genInfo.HadSpecialCond, explicitSampler: explicitSampler, explicitScheduler: explicitScheduler, sectionId: T2IParamInput.SectionID_VideoSwap);
             FinalLatentImage = [samplered, 0];
             IsImageToVideoSwap = false;
+        }
+        if (genInfo.DoFirstFrameLatentSwap is not null) // This is some weird jank hack that kan5 i2v needs
+        {
+            string replaceNode = CreateNode("ReplaceVideoLatentFrames", new JObject()
+            {
+                ["destination"] = FinalLatentImage,
+                ["source"] = genInfo.DoFirstFrameLatentSwap,
+                ["index"] = 0
+            });
+            FinalLatentImage = [replaceNode, 0];
+            string normalized = CreateNode("NormalizeVideoLatentStart", new JObject()
+            {
+                ["latent"] = FinalLatentImage,
+                ["start_frame_count"] = 4,
+                ["reference_frame_count"] = 5
+            });
+            FinalLatentImage = [normalized, 0];
+            genInfo.DoFirstFrameLatentSwap = null;
         }
         string decoded = CreateVAEDecode(genInfo.Vae, FinalLatentImage);
         FinalImageOut = [decoded, 0];
@@ -2149,8 +2289,8 @@ public partial class WorkflowGenerator
             });
             string encoded = CreateNode("CLIPVisionEncode", new JObject()
             {
-                ["clip_vision"] = new JArray() { clipLoader, 0 },
-                ["image"] = new JArray() { imgNodeId, int.Parse(imgNodePart) },
+                ["clip_vision"] = NodePath(clipLoader, 0),
+                ["image"] = NodePath(imgNodeId, int.Parse(imgNodePart)),
                 ["crop"] = "center"
             });
             if (wantsSwarmCustom)
@@ -2165,7 +2305,7 @@ public partial class WorkflowGenerator
                     ["target_width"] = width,
                     ["target_height"] = height,
                     ["guidance"] = UserInput.Get(T2IParamTypes.FluxGuidanceScale, defaultGuidance),
-                    ["clip_vision_output"] = new JArray() { encoded, 0 },
+                    ["clip_vision_output"] = NodePath(encoded, 0),
                     ["llama_template"] = "hunyuan_image"
                 }, id);
             }
@@ -2174,7 +2314,7 @@ public partial class WorkflowGenerator
                 node = CreateNode("TextEncodeHunyuanVideo_ImageToVideo", new JObject()
                 {
                     ["clip"] = clip,
-                    ["clip_vision_output"] = new JArray() { encoded, 0 },
+                    ["clip_vision_output"] = NodePath(encoded, 0),
                     ["prompt"] = content,
                     ["image_interleave"] = CurrentModelClass()?.ID == "hunyuan-video-i2v-v2" ? 4 : 2
                 }, id);
@@ -2302,7 +2442,7 @@ public partial class WorkflowGenerator
             {
                 string applied = CreateNode("GLIGENTextBoxApply", new JObject()
                 {
-                    ["gligen_textbox_model"] = new JArray() { gligenLoader, 0 },
+                    ["gligen_textbox_model"] = NodePath(gligenLoader, 0),
                     ["clip"] = clip,
                     ["conditioning_to"] = lastCond,
                     ["text"] = part.Prompt,
@@ -2334,7 +2474,7 @@ public partial class WorkflowGenerator
             {
                 regionNode = CreateNode("InvertMask", new JObject()
                 {
-                    ["mask"] = new JArray() { regionNode, 0 }
+                    ["mask"] = NodePath(regionNode, 0)
                 });
             }
             RegionHelper region = new(partCond, [regionNode, 0]);
@@ -2363,7 +2503,7 @@ public partial class WorkflowGenerator
         });
         string maskBackground = CreateNode("SwarmExcludeFromMask", new JObject()
         {
-            ["main_mask"] = new JArray() { globalMask, 0 },
+            ["main_mask"] = NodePath(globalMask, 0),
             ["exclude_mask"] = lastMergedMask
         });
         string backgroundPrompt = string.IsNullOrWhiteSpace(regionalizer.BackgroundPrompt) ? regionalizer.GlobalPrompt : regionalizer.BackgroundPrompt;
@@ -2371,7 +2511,7 @@ public partial class WorkflowGenerator
         string mainConditioning = CreateNode("ConditioningSetMask", new JObject()
         {
             ["conditioning"] = backgroundCond,
-            ["mask"] = new JArray() { maskBackground, 0 },
+            ["mask"] = NodePath(maskBackground, 0),
             ["strength"] = 1 - globalStrength,
             ["set_cond_area"] = "default"
         });
@@ -2399,27 +2539,27 @@ public partial class WorkflowGenerator
             string regionCond = CreateNode("ConditioningSetMask", new JObject()
             {
                 ["conditioning"] = region.PartCond,
-                ["mask"] = new JArray() { overlapped, 0 },
+                ["mask"] = NodePath(overlapped, 0),
                 ["strength"] = 1 - globalStrength,
                 ["set_cond_area"] = "default"
             });
             mainConditioning = CreateNode("ConditioningCombine", new JObject()
             {
-                ["conditioning_1"] = new JArray() { mainConditioning, 0 },
-                ["conditioning_2"] = new JArray() { regionCond, 0 }
+                ["conditioning_1"] = NodePath(mainConditioning, 0),
+                ["conditioning_2"] = NodePath(regionCond, 0)
             });
         }
         string globalCondApplied = CreateNode("ConditioningSetMask", new JObject()
         {
             ["conditioning"] = globalCond,
-            ["mask"] = new JArray() { globalMask, 0 },
+            ["mask"] = NodePath(globalMask, 0),
             ["strength"] = globalStrength,
             ["set_cond_area"] = "default"
         });
         string finalCond = CreateNode("ConditioningCombine", new JObject()
         {
-            ["conditioning_1"] = new JArray() { mainConditioning, 0 },
-            ["conditioning_2"] = new JArray() { globalCondApplied, 0 }
+            ["conditioning_1"] = NodePath(mainConditioning, 0),
+            ["conditioning_2"] = NodePath(globalCondApplied, 0)
         });
         return new(finalCond, 0);
     }
@@ -2461,24 +2601,29 @@ public partial class WorkflowGenerator
     public HashSet<string> UsedInputs = null;
 
     /// <summary>Returns true if the node is connected to anything, or false if it has no outbound connections.</summary>
-    public bool NodeIsConnectedAnywhere(string nodeId)
+    public bool NodeIsConnectedAnywhere(string nodeId, int ind = -1, string exclude = null)
     {
         if (UsedInputs is null)
         {
             UsedInputs = [];
-            foreach (JObject node in Workflow.Values().Cast<JObject>())
+            foreach (JProperty node in Workflow.Properties())
             {
-                JObject inputs = node["inputs"] as JObject;
+                if (node.Name == exclude)
+                {
+                    continue;
+                }
+                JObject inputs = node.Value["inputs"] as JObject;
                 foreach (JProperty property in inputs.Properties().ToArray())
                 {
                     if (property.Value is JArray jarr && jarr.Count == 2)
                     {
-                        UsedInputs.Add($"{jarr[0]}");
+                        UsedInputs.Add($"{jarr[0]}:-1");
+                        UsedInputs.Add($"{jarr[0]}:{jarr[1]}");
                     }
                 }
             }
         }
-        return UsedInputs.Contains(nodeId);
+        return UsedInputs.Contains($"{nodeId}:{ind}");
     }
 
     /// <summary>Removes a class of nodes if they are not connected to anything.</summary>
