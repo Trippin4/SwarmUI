@@ -646,7 +646,19 @@ function shiftToNextImagePreview(next = true, expand = false, isArrows = false) 
     return true;
 }
 
+keybindManager.register('keybinds.generatekeybind', () => {
+    if (isVisible(getRequiredElementById('main_image_area'))) {
+        getRequiredElementById('alt_generate_button').click();
+    }
+    else if (isVisible(getRequiredElementById('simple_generate_button'))) {
+        getRequiredElementById('simple_generate_button').click();
+    }
+});
+
 window.addEventListener('keydown', function (kbevent) {
+    if (keybindManager.isTypingContext(kbevent.target)) {
+        return;
+    }
     let isFullView = imageFullView.isOpen();
     let isCurImgFocused = document.activeElement &&
         (findParentOfClass(document.activeElement, 'current_image')
@@ -654,25 +666,19 @@ window.addEventListener('keydown', function (kbevent) {
             || document.activeElement.tagName == 'BODY');
     if (isFullView && kbevent.key == 'Escape') {
         $('#image_fullview_modal').modal('toggle');
+        kbevent.preventDefault();
+        kbevent.stopPropagation();
     }
     else if ((kbevent.key == 'ArrowLeft' || kbevent.key == 'ArrowUp') && (isFullView || isCurImgFocused)) {
         shiftToNextImagePreview(false, isFullView, true);
+        kbevent.preventDefault();
+        kbevent.stopPropagation();
     }
     else if ((kbevent.key == 'ArrowRight' || kbevent.key == 'ArrowDown') && (isFullView || isCurImgFocused)) {
         shiftToNextImagePreview(true, isFullView, true);
+        kbevent.preventDefault();
+        kbevent.stopPropagation();
     }
-    else if (keybindManager.matches(kbevent, getUserSetting('keybinds.generatekeybind')) && isVisible(getRequiredElementById('main_image_area'))) {
-        getRequiredElementById('alt_generate_button').click();
-    }
-    else if (keybindManager.matches(kbevent, getUserSetting('keybinds.generatekeybind')) && isVisible(getRequiredElementById('simple_generate_button'))) {
-        getRequiredElementById('simple_generate_button').click();
-    }
-    else {
-        return;
-    }
-    kbevent.preventDefault();
-    kbevent.stopPropagation();
-    return false;
 });
 
 function alignImageDataFormat() {

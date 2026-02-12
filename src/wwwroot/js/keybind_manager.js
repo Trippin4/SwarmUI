@@ -126,11 +126,11 @@ class KeybindManager {
      * Check if user is typing in an input field
      */
     isTypingContext(target) {
-        if (!target) return false;
+        if (!target || !target.tagName) return false;
         let tagName = target.tagName.toLowerCase();
         return (
-            tagName === 'input' ||
-            tagName === 'textarea' ||
+            tagName == 'input' ||
+            tagName == 'textarea' ||
             target.isContentEditable
         );
     }
